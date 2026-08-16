@@ -67,7 +67,8 @@ public final class LecternScannerMenuScreen extends Screen {
         int top = (this.height - PANEL_H) / 2;
         g.fill(left - 1, top - 1, left + PANEL_W + 1, top + PANEL_H + 1, COL_EDGE);
         g.fill(left, top, left + PANEL_W, top + PANEL_H, COL_BG);
-        g.drawCenteredString(this.font, "PATHFINDER  v" + ModVersion.VERSION, this.width / 2, top + 12, COL_ACCENT);
+        String verLabel = "PATHFINDER  v" + ModVersion.VERSION + (ModVersion.isBeta() ? " beta" : "");
+        g.drawCenteredString(this.font, verLabel, this.width / 2, top + 12, COL_ACCENT);
         g.drawCenteredString(this.font, "by ovrmiha  ·  [ редактор · J стоп ]", this.width / 2, top + PANEL_H - 16, COL_MUTED);
     }
 

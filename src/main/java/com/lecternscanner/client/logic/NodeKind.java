@@ -7,6 +7,7 @@ public enum NodeKind {
     // —— flow ——
     START("Старт", Category.FLOW, 0xFF2A9D8F),
     AREA("Зона", Category.FLOW, 0xFF5B8C5A),
+    CHEAT("Чит", Category.FLOW, 0xFFE63946),
     IF("Якщо", Category.FLOW, 0xFF3D5A80),
     END("Кінець", Category.FLOW, 0xFFB00020),
 
@@ -46,6 +47,7 @@ public enum NodeKind {
             case "ELSE", "OPTIONAL", "REQUIRED" -> START; // removed — skip as passthrough start-like
             case "FIND" -> FIND_BLOCK;
             case "ZONE", "RADIUS_ZONE" -> AREA;
+            case "XRAY", "VISION" -> CHEAT;
             default -> {
                 try {
                     yield NodeKind.valueOf(name);

@@ -972,7 +972,8 @@ public final class PathNavigator {
         BlockPos goal = BlockPos.containing(target.x, target.y, target.z);
 
         // Wider local A* so we see around obstacles instead of digging a 1-block hole
-        int range = 96;
+        // Cheat: use full loaded-chunk awareness with a larger search budget
+        int range = BotCheat.isEnabled() ? Math.max(128, BotCheat.scanRadius()) : 96;
         List<BlockPos> path = SurvivalAStar.findPath(level, start, goal, range);
         if (!path.isEmpty()) {
             walkPath.addAll(path);

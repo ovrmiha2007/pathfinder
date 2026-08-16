@@ -87,6 +87,11 @@ public final class LogicNode {
                 posY2 = posY;
                 posZ2 = posZ + 16;
             }
+            case CHEAT -> {
+                mode = "on";
+                radius = 96;
+                target = "";
+            }
             case CRAFT -> target = "minecraft:oak_planks";
             case MINE, FIND_BLOCK, HAS_NEAR, IN_RADIUS -> {
                 target = "#minecraft:logs";
@@ -148,6 +153,9 @@ public final class LogicNode {
                         + " → " + posX2 + "," + posY2 + "," + posZ2 + "]";
             }
             return kind.label + " @" + posX + " " + posY + " " + posZ + " r=" + radius;
+        }
+        if (kind == NodeKind.CHEAT) {
+            return kind.label + " r=" + radius;
         }
         if (kind == NodeKind.PLACE) {
             String shortT = shortTarget();

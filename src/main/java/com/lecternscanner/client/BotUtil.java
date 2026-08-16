@@ -345,8 +345,8 @@ public final class BotUtil {
     private static boolean miningHeld;
 
     /**
-     * Hold-to-mine like vanilla. Never mines through corners: if a block is boxed in
-     * on all cardinal sides, opens an orthogonal neighbor (or uses an exposed face).
+     * Hold-to-mine like vanilla. With {@link BotCheat}: dig toward buried targets through walls.
+     * Without cheat: never mines through corners — opens orthogonal neighbor if boxed in.
      */
     public static boolean mineTick(Minecraft mc, LocalPlayer player, BlockPos desired) {
         ClientLevel level = mc.level;
@@ -360,6 +360,13 @@ public final class BotUtil {
         }
 
         BlockPos pos = resolveAccessibleMineTarget(level, player, desired);
+        // Cheat: prefer first solid on the ray so we tunnel through walls toward buried targets
+        if (BotCheat.isEnabled()) {
+            BlockPos ray = BotControl.firstBreakableOnRay(mc, player, desired);
+            if (ray != null && !level.getBlockState(ray).isAir() && canReachBlock(player, ray)) {
+                pos = ray;
+            }
+        }
         if (!canReachBlock(player, pos)) {
             stopMining(mc);
             return false;
@@ -375,7 +382,7 @@ public final class BotUtil {
         }
 
         Direction face = findExposedMineFace(level, player, pos);
-        if (face == null) {
+        if (face == null && !BotCheat.isEnabled()) {
             BlockPos open = pickCardinalBlockToOpen(level, player, pos);
             if (open != null && !open.equals(pos) && !level.getBlockState(open).isAir()) {
                 pos = open;
@@ -441,6 +448,14 @@ public final class BotUtil {
      */
     public static BlockPos resolveAccessibleMineTarget(ClientLevel level, LocalPlayer player, BlockPos desired) {
         if (level.getBlockState(desired).isAir()) {
+            return desired;
+        }
+        // Cheat / xray: go for the ore itself; dig path via firstBreakableOrthogonal / ray
+        if (BotCheat.isEnabled()) {
+            BlockPos onWay = firstBreakableOrthogonal(level, player, desired);
+            if (onWay != null && !level.getBlockState(onWay).isAir()) {
+                return onWay;
+            }
             return desired;
         }
         if (findExposedMineFace(level, player, desired) != null) {
@@ -1035,6 +1050,9 @@ public final class BotUtil {
     public static BlockPos findNearestBlock(ClientLevel level, BlockPos origin, int range,
                                             Predicate<BlockState> pred,
                                             net.minecraft.world.phys.AABB area) {
+        if (BotCheat.isEnabled()) {
+            return findNearestBlockCheat(level, origin, range, pred, area);
+        }
         BlockPos best = null;
         int bestD = Integer.MAX_VALUE;
         for (int dx = -range; dx <= range; dx++) {
@@ -1053,6 +1071,77 @@ public final class BotUtil {
                         if (d < bestD) {
                             bestD = d;
                             best = p.immutable();
+                        }
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    /**
+     * X-ray scan: all loaded chunks in memory within cheat radius / work area.
+     * Does not require line-of-sight or exposed faces.
+     */
+    public static BlockPos findNearestBlockCheat(ClientLevel level, BlockPos origin, int range,
+                                                 Predicate<BlockState> pred,
+                                                 net.minecraft.world.phys.AABB area) {
+        int r = Math.max(range, BotCheat.scanRadius());
+        int minX;
+        int minY;
+        int minZ;
+        int maxX;
+        int maxY;
+        int maxZ;
+        if (area != null) {
+            minX = (int) Math.floor(area.minX);
+            minY = (int) Math.floor(area.minY);
+            minZ = (int) Math.floor(area.minZ);
+            maxX = (int) Math.ceil(area.maxX) - 1;
+            maxY = (int) Math.ceil(area.maxY) - 1;
+            maxZ = (int) Math.ceil(area.maxZ) - 1;
+        } else {
+            minX = origin.getX() - r;
+            minY = Math.max(level.getMinY(), origin.getY() - Math.min(64, r));
+            minZ = origin.getZ() - r;
+            maxX = origin.getX() + r;
+            maxY = Math.min(level.getMinY() + level.getHeight() - 1, origin.getY() + Math.min(64, r));
+            maxZ = origin.getZ() + r;
+        }
+
+        BlockPos best = null;
+        int bestD = Integer.MAX_VALUE;
+        int minCx = minX >> 4;
+        int maxCx = maxX >> 4;
+        int minCz = minZ >> 4;
+        int maxCz = maxZ >> 4;
+
+        for (int cx = minCx; cx <= maxCx; cx++) {
+            for (int cz = minCz; cz <= maxCz; cz++) {
+                if (!level.getChunkSource().hasChunk(cx, cz)) {
+                    continue;
+                }
+                var chunk = level.getChunk(cx, cz);
+                int x0 = Math.max(minX, cx << 4);
+                int x1 = Math.min(maxX, (cx << 4) + 15);
+                int z0 = Math.max(minZ, cz << 4);
+                int z1 = Math.min(maxZ, (cz << 4) + 15);
+                for (int x = x0; x <= x1; x++) {
+                    for (int z = z0; z <= z1; z++) {
+                        for (int y = minY; y <= maxY; y++) {
+                            BlockPos p = new BlockPos(x, y, z);
+                            if (!level.isLoaded(p)) {
+                                continue;
+                            }
+                            BlockState st = chunk.getBlockState(p);
+                            if (!pred.test(st)) {
+                                continue;
+                            }
+                            int d = Math.abs(x - origin.getX()) + Math.abs(y - origin.getY()) + Math.abs(z - origin.getZ());
+                            if (d < bestD) {
+                                bestD = d;
+                                best = p.immutable();
+                            }
                         }
                     }
                 }

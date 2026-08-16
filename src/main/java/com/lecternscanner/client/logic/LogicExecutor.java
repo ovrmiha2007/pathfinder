@@ -2,6 +2,7 @@ package com.lecternscanner.client.logic;
 
 import java.util.Locale;
 
+import com.lecternscanner.client.BotCheat;
 import com.lecternscanner.client.BotControl;
 import com.lecternscanner.client.BotOverlay;
 import com.lecternscanner.client.BotUtil;
@@ -66,6 +67,7 @@ public final class LogicExecutor {
         this.placeCooldown = 0;
         this.placeInvBefore = -1;
         this.workArea = null;
+        BotCheat.reset();
         craft.abort(Minecraft.getInstance(), Minecraft.getInstance().player);
         graph.start().ifPresentOrElse(s -> {
             currentId = s.id;
@@ -84,6 +86,7 @@ public final class LogicExecutor {
         placeCooldown = 0;
         placeInvBefore = -1;
         workArea = null;
+        BotCheat.reset();
         Minecraft mc = Minecraft.getInstance();
         craft.abort(mc, mc.player);
         BotUtil.stopMining(mc);
@@ -125,6 +128,7 @@ public final class LogicExecutor {
         switch (node.kind) {
             case START -> advance(LogicEdge.Port.OUT);
             case AREA -> runArea(node);
+            case CHEAT -> runCheat(node);
             case END -> {
                 chat("§aРоботу завершено");
                 phase = Phase.DONE;
@@ -156,6 +160,15 @@ public final class LogicExecutor {
             status = "зона " + formatArea(workArea);
             chat("§aЗона роботи: " + formatArea(workArea));
         }
+        advance(LogicEdge.Port.OUT);
+    }
+
+    private void runCheat(LogicNode node) {
+        int r = Math.max(16, Math.min(256, node.radius <= 0 ? 96 : node.radius));
+        BotCheat.setScanRadius(r);
+        BotCheat.setEnabled(true);
+        status = "чит r=" + r;
+        chat("§cЧит увімкнено (r=" + r + ") — крізь стіни, усі чанки в пам'яті");
         advance(LogicEdge.Port.OUT);
     }
 
@@ -260,6 +273,9 @@ public final class LogicExecutor {
 
     private BlockPos findInRadius(Minecraft mc, LocalPlayer player, LogicNode node) {
         int range = Math.max(4, Math.min(64, node.radius));
+        if (BotCheat.isEnabled()) {
+            range = Math.max(range, BotCheat.scanRadius());
+        }
         return BotUtil.findNearestBlock(mc.level, player.blockPosition(), range,
                 st -> matchesBlock(st, node.target), workArea);
     }
@@ -284,6 +300,9 @@ public final class LogicExecutor {
             }
         }
         int range = Math.max(8, node.radius);
+        if (BotCheat.isEnabled()) {
+            range = Math.max(range, BotCheat.scanRadius());
+        }
         if (workPos == null || mc.level.getBlockState(workPos).isAir() || !inWorkArea(workPos)) {
             workPos = BotUtil.findNearestBlock(mc.level, player.blockPosition(), range,
                     st -> matchesBlock(st, node.target), workArea);
@@ -301,6 +320,32 @@ public final class LogicExecutor {
         }
         BotOverlay.addBreak(workPos);
         if (!BotUtil.canReachBlock(player, workPos)) {
+            // Cheat: dig first solid on the ray / walk-path toward buried target
+            if (BotCheat.isEnabled()) {
+                BlockPos ray = BotControl.firstBreakableOnRay(mc, player, workPos);
+                if (ray != null && BotUtil.canReachBlock(player, ray)
+                        && !mc.level.getBlockState(ray).isAir()) {
+                    MovementKeys.setMove(false, false, false, false);
+                    status = "копаю шлях → " + workPos.toShortString();
+                    if (BotUtil.mineTick(mc, player, workPos)) {
+                        workPos = null;
+                        BotUtil.stopMining(mc);
+                        if (node.autoPickup) {
+                            scoopTicks = 40;
+                        }
+                    }
+                    return;
+                }
+                if (nav != null) {
+                    var dest = net.minecraft.world.phys.Vec3.atCenterOf(workPos);
+                    if (!nav.isMoving()) {
+                        nav.goTo(dest, null);
+                    }
+                    nav.tick();
+                    status = "йду до " + workPos.toShortString() + " (чит)";
+                    return;
+                }
+            }
             BotUtil.lookAt(player, net.minecraft.world.phys.Vec3.atCenterOf(workPos));
             MovementKeys.setMove(true, false, false, true);
             return;

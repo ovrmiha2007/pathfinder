@@ -280,7 +280,7 @@ public final class LogicEditorScreen extends Screen {
             targetBox.setY(this.height - 26);
             targetBox.setWidth(INSPECT_W - 20);
             if (selected != null && selected.kind != NodeKind.START && selected.kind != NodeKind.END
-                    && selected.kind != NodeKind.AREA) {
+                    && selected.kind != NodeKind.AREA && selected.kind != NodeKind.CHEAT) {
                 targetBox.setValue(selected.target == null ? "" : selected.target);
                 targetBox.setEditable(true);
                 targetBox.visible = true;
@@ -317,7 +317,8 @@ public final class LogicEditorScreen extends Screen {
         g.fill(PALETTE_W - 1, 0, PALETTE_W, this.height, PANEL_EDGE);
         g.drawString(this.font, "НОДИ", 12, 10, ACCENT, false);
         g.drawString(this.font, "клік → потім полотно", 12, 22, MUTED, false);
-        g.drawString(this.font, "v" + ModVersion.VERSION, 12, this.height - 14, MUTED, false);
+        String ver = "v" + ModVersion.VERSION + (ModVersion.isBeta() ? " beta" : "");
+        g.drawString(this.font, ver, 12, this.height - 14, MUTED, false);
         drawPalette(g, mouseX, mouseY);
 
         g.fill(canvasRight(), 0, this.width, this.height, PANEL);
@@ -447,12 +448,23 @@ public final class LogicEditorScreen extends Screen {
 
         g.drawString(this.font, selected.kind.label, ix, iy, TEXT, false);
         iy += 14;
-        if (selected.kind != NodeKind.AREA && selected.kind != NodeKind.START && selected.kind != NodeKind.END) {
+        if (selected.kind != NodeKind.AREA && selected.kind != NodeKind.START
+                && selected.kind != NodeKind.END && selected.kind != NodeKind.CHEAT) {
             g.drawString(this.font, selected.shortTarget().isEmpty() ? "без цілі" : selected.shortTarget(),
                     ix, iy, MUTED, false);
             iy += 18;
         } else {
             iy += 4;
+        }
+
+        if (selected.kind == NodeKind.CHEAT) {
+            g.drawWordWrap(this.font, Component.literal(
+                            "Увімкнути чит для наступних нод: усі чанки в клієнтській пам'яті, "
+                                    + "цілі крізь стіни, шлях з урахуванням цього."),
+                    ix, iy, INSPECT_W - 20, MUTED);
+            iy += 48;
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Радіус", selected.radius);
+            return;
         }
 
         if (selected.kind == NodeKind.AREA) {
@@ -564,7 +576,8 @@ public final class LogicEditorScreen extends Screen {
         }
 
         iy += 8;
-        if (selected.kind != NodeKind.END && selected.kind != NodeKind.START && selected.kind != NodeKind.AREA) {
+        if (selected.kind != NodeKind.END && selected.kind != NodeKind.START
+                && selected.kind != NodeKind.AREA && selected.kind != NodeKind.CHEAT) {
             g.drawString(this.font, "Свій id:", ix, iy, MUTED, false);
         }
     }
@@ -848,13 +861,17 @@ public final class LogicEditorScreen extends Screen {
 
         if (zoom >= 0.65f) {
             g.drawString(this.font, n.kind.label, sx + 6, sy + 3, TEXT, false);
-            String sub = n.shortTarget().isEmpty() ? "—" : n.shortTarget();
+            String sub = n.kind == NodeKind.CHEAT
+                    ? "чит"
+                    : (n.shortTarget().isEmpty() ? "—" : n.shortTarget());
             if (sub.length() > 15) {
                 sub = sub.substring(0, 13) + "…";
             }
             g.drawString(this.font, sub, sx + 6, sy + Math.round(16 * zoom), 0xFFE0E8F0, false);
             String meta;
-            if (needsRadius(n.kind) || (n.kind == NodeKind.IF && "has_near".equals(n.mode))) {
+            if (n.kind == NodeKind.CHEAT) {
+                meta = "r" + n.radius;
+            } else if (needsRadius(n.kind) || (n.kind == NodeKind.IF && "has_near".equals(n.mode))) {
                 meta = "×" + n.count + "  r" + n.radius;
             } else if (n.kind == NodeKind.IF) {
                 meta = switch (n.mode) {
@@ -1226,6 +1243,18 @@ public final class LogicEditorScreen extends Screen {
             return false;
         }
 
+        if (selected.kind == NodeKind.CHEAT) {
+            iy += 48;
+            if (clickStat(mx, my, ix, iy, selected.radius, v -> {
+                pushUndo();
+                selected.radius = v;
+            }, 16, 256)) {
+                toast("чит r=" + selected.radius, 20);
+                return true;
+            }
+            return false;
+        }
+
         if (selected.kind == NodeKind.START || selected.kind == NodeKind.END) {
             return false;
         }
@@ -1462,7 +1491,10 @@ public final class LogicEditorScreen extends Screen {
         if (onCanvas(mouseX, mouseY) && scrollY != 0) {
             if (hasShift() && selected != null) {
                 pushUndo();
-                if (needsRadius(selected.kind) || (selected.kind == NodeKind.IF && "has_near".equals(selected.mode))
+                if (selected.kind == NodeKind.CHEAT) {
+                    selected.radius = Mth.clamp(selected.radius + (scrollY > 0 ? 8 : -8), 16, 256);
+                    toast("чит r=" + selected.radius, 20);
+                } else if (needsRadius(selected.kind) || (selected.kind == NodeKind.IF && "has_near".equals(selected.mode))
                         || (selected.kind == NodeKind.PLACE && !"coords".equals(selected.mode))) {
                     selected.radius = Mth.clamp(selected.radius + (scrollY > 0 ? 1 : -1), 1, 64);
                     toast("радіус=" + selected.radius, 20);

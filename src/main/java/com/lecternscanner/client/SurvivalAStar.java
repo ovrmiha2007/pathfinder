@@ -38,7 +38,8 @@ public final class SurvivalAStar {
 
     public static List<BlockPos> findPath(ClientLevel level, BlockPos startFeet, BlockPos goalFeet, int maxHorizRange) {
         BlockPos start = findStandPos(level, startFeet);
-        BlockPos goal = findStandPosNear(level, goalFeet, 12);
+        int standR = BotCheat.isEnabled() ? 24 : 12;
+        BlockPos goal = findStandPosNear(level, goalFeet, standR);
         if (start == null || goal == null) {
             return List.of();
         }
@@ -61,7 +62,8 @@ public final class SurvivalAStar {
         bestG.put(startKey, 0.0);
 
         int expanded = 0;
-        while (!open.isEmpty() && expanded < MAX_NODES) {
+        int nodeBudget = BotCheat.isEnabled() ? MAX_NODES * 2 : MAX_NODES;
+        while (!open.isEmpty() && expanded < nodeBudget) {
             Node cur = open.poll();
             long ck = cur.pos.asLong();
             if (closed.contains(ck)) {
