@@ -1161,10 +1161,17 @@ public final class LogicEditorScreen extends Screen {
     private boolean clickInspector(int mx, int my) {
         int ix = canvasRight() + 10;
         int iy = 28 - scrollInspect;
-        iy += 14 + 18;
+        // Must match drawInspector header: title (+14), then shortTarget (+18) or spacer (+4)
+        iy += 14;
+        if (selected.kind == NodeKind.AREA || selected.kind == NodeKind.START
+                || selected.kind == NodeKind.END || selected.kind == NodeKind.CHEAT) {
+            iy += 4;
+        } else {
+            iy += 18;
+        }
 
         if (selected.kind == NodeKind.AREA) {
-            iy += 12;
+            iy += 12; // "Тип зони" label
             for (TargetPresets.Preset p : TargetPresets.AREA_MODES) {
                 if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 18)) {
                     pushUndo();
@@ -1176,7 +1183,7 @@ public final class LogicEditorScreen extends Screen {
             }
             iy += 4;
             if ("box".equals(selected.mode)) {
-                iy += 12;
+                iy += 12; // "Кут A"
                 if (clickStat(mx, my, ix, iy, selected.posX, v -> { pushUndo(); selected.posX = v; }, -30_000_000, 30_000_000)) {
                     return true;
                 }
@@ -1195,7 +1202,7 @@ public final class LogicEditorScreen extends Screen {
                     toast("XYZ₁ " + selected.posX + " " + selected.posY + " " + selected.posZ, 40);
                     return true;
                 }
-                iy += 26 + 12;
+                iy += 26 + 12; // button + "Кут B"
                 if (clickStat(mx, my, ix, iy, selected.posX2, v -> { pushUndo(); selected.posX2 = v; }, -30_000_000, 30_000_000)) {
                     return true;
                 }
@@ -1215,7 +1222,7 @@ public final class LogicEditorScreen extends Screen {
                     return true;
                 }
             } else {
-                iy += 12;
+                iy += 12; // "Центр"
                 if (clickStat(mx, my, ix, iy, selected.posX, v -> { pushUndo(); selected.posX = v; }, -30_000_000, 30_000_000)) {
                     return true;
                 }
@@ -1244,7 +1251,7 @@ public final class LogicEditorScreen extends Screen {
         }
 
         if (selected.kind == NodeKind.CHEAT) {
-            iy += 48;
+            iy += 48; // help text
             if (clickStat(mx, my, ix, iy, selected.radius, v -> {
                 pushUndo();
                 selected.radius = v;
