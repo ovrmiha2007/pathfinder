@@ -17,10 +17,12 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.ItemTags;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Runs a {@link LogicGraph} tick-by-tick (sequential + IF / radius search).
@@ -43,6 +45,12 @@ public final class LogicExecutor {
     private int placeInvBefore = -1;
     /** Active work zone from AREA node; null = no limit. */
     private AABB workArea;
+    /** Side task root from PARALLEL (TRUE port); opportunistic each tick. */
+    private String parallelId;
+    private int parallelTicks;
+    /** SURVEY: waypoint index on the patrol ring. */
+    private int surveyIndex;
+    private BlockPos surveyCenter;
 
     public Phase getPhase() {
         return phase;
@@ -67,6 +75,10 @@ public final class LogicExecutor {
         this.placeCooldown = 0;
         this.placeInvBefore = -1;
         this.workArea = null;
+        this.parallelId = null;
+        this.parallelTicks = 0;
+        this.surveyIndex = 0;
+        this.surveyCenter = null;
         BotCheat.reset();
         craft.abort(Minecraft.getInstance(), Minecraft.getInstance().player);
         graph.start().ifPresentOrElse(s -> {
@@ -86,6 +98,10 @@ public final class LogicExecutor {
         placeCooldown = 0;
         placeInvBefore = -1;
         workArea = null;
+        parallelId = null;
+        parallelTicks = 0;
+        surveyIndex = 0;
+        surveyCenter = null;
         BotCheat.reset();
         Minecraft mc = Minecraft.getInstance();
         craft.abort(mc, mc.player);
@@ -109,9 +125,15 @@ public final class LogicExecutor {
             return;
         }
         ticksOnNode++;
-        if (ticksOnNode > nodeTimeout) {
+        if (ticksOnNode > nodeTimeoutFor(nodeKindSafe())) {
             chat("§eТаймаут ноди — далі");
             advance(LogicEdge.Port.OUT);
+            return;
+        }
+
+        // Opportunistic side-task from PARALLEL (TRUE → background chain)
+        if (parallelId != null && tickParallel(mc, player)) {
+            player.displayClientMessage(Component.literal("§dНода§f " + status), true);
             return;
         }
 
@@ -123,12 +145,16 @@ public final class LogicExecutor {
             return;
         }
         status = node.title();
+        if (parallelId != null) {
+            status = status + " ‖";
+        }
         player.displayClientMessage(Component.literal("§dНода§f " + status), true);
 
         switch (node.kind) {
             case START -> advance(LogicEdge.Port.OUT);
             case AREA -> runArea(node);
             case CHEAT -> runCheat(node);
+            case PARALLEL -> runParallel(node);
             case END -> {
                 chat("§aРоботу завершено");
                 phase = Phase.DONE;
@@ -143,6 +169,9 @@ public final class LogicExecutor {
             case CRAFT -> runCraft(mc, player, node);
             case PLACE -> runPlace(mc, player, node);
             case GOTO -> runGoto(mc, player, node);
+            case GOTO_POS -> runGotoPos(mc, player, node);
+            case FOLLOW -> runFollow(mc, player, node);
+            case SURVEY -> runSurvey(mc, player, node);
             case SMELT -> {
                 chat("§eПереплавка: поки скіп (MVP)");
                 advance(LogicEdge.Port.OUT);
@@ -150,6 +179,21 @@ public final class LogicExecutor {
             case TAKE_FROM -> advance(LogicEdge.Port.OUT);
             default -> advance(LogicEdge.Port.OUT);
         }
+    }
+
+    private NodeKind nodeKindSafe() {
+        if (graph == null || currentId == null) {
+            return NodeKind.START;
+        }
+        return graph.find(currentId).map(n -> n.kind).orElse(NodeKind.START);
+    }
+
+    private int nodeTimeoutFor(NodeKind kind) {
+        return switch (kind) {
+            case FOLLOW, SURVEY, GOTO_POS -> 20 * 180;
+            case MINE, GOTO -> 20 * 90;
+            default -> 20 * 45;
+        };
     }
 
     private void runArea(LogicNode node) {
@@ -170,6 +214,234 @@ public final class LogicExecutor {
         status = "чит r=" + r;
         chat("§cЧит увімкнено (r=" + r + ") — крізь стіни, усі чанки в пам'яті");
         advance(LogicEdge.Port.OUT);
+    }
+
+    /** Register TRUE→ side chain; continue on OUT. */
+    private void runParallel(LogicNode node) {
+        var side = graph.out(node.id, LogicEdge.Port.TRUE);
+        if (side.isPresent()) {
+            parallelId = side.get().toId;
+            parallelTicks = 0;
+            chat("§dПаралельно: дод. задача «"
+                    + graph.find(parallelId).map(n -> n.kind.label).orElse("?") + "»");
+        } else {
+            chat("§eПаралельно: немає зв'язку «дод» (TRUE) — лише основний потік");
+            parallelId = null;
+        }
+        advance(LogicEdge.Port.OUT);
+    }
+
+    /**
+     * @return true if this tick was consumed by the side task (skip main node)
+     */
+    private boolean tickParallel(Minecraft mc, LocalPlayer player) {
+        if (parallelId == null || graph == null) {
+            return false;
+        }
+        LogicNode side = graph.find(parallelId).orElse(null);
+        if (side == null || side.kind == NodeKind.END || side.kind == NodeKind.START) {
+            parallelId = null;
+            return false;
+        }
+        parallelTicks++;
+        boolean acted = false;
+        switch (side.kind) {
+            case PICKUP -> {
+                double range = Math.max(2, Math.min(12, side.radius));
+                if (BotUtil.nearestItemDrop(mc.level, player, range) != null) {
+                    acted = tickScoop(mc, player, side, range);
+                    if (!acted && parallelTicks > 20 * 8) {
+                        advanceParallel(side);
+                    }
+                }
+            }
+            case MINE -> {
+                int range = Math.max(4, Math.min(16, side.radius));
+                BlockPos ore = BotUtil.findNearestBlock(mc.level, player.blockPosition(), range,
+                        st -> matchesBlock(st, side.target), workArea);
+                if (ore != null && BotUtil.canReachBlock(player, ore)) {
+                    acted = true;
+                    BotOverlay.addBreak(ore);
+                    if (BotUtil.mineTick(mc, player, ore)) {
+                        if (side.autoPickup) {
+                            scoopTicks = 20;
+                        }
+                        if (countTarget(player, side) >= Math.max(1, side.count)) {
+                            advanceParallel(side);
+                        }
+                    }
+                }
+            }
+            case FOLLOW -> {
+                Entity t = BotUtil.findFollowTarget(mc.level, player, side.mode, side.target,
+                        Math.max(8, side.radius));
+                double stopAt = Math.max(2, side.count <= 0 ? 3 : side.count);
+                if (t != null && player.distanceTo(t) <= stopAt + 1.5) {
+                    acted = true;
+                    BotUtil.lookAtEntity(player, t);
+                    if (player.distanceTo(t) <= stopAt) {
+                        advanceParallel(side);
+                    }
+                }
+            }
+            case GOTO_POS -> {
+                Vec3 dest = new Vec3(side.posX + 0.5, side.posY, side.posZ + 0.5);
+                if (player.position().distanceToSqr(dest) < 4.0) {
+                    advanceParallel(side);
+                    acted = true;
+                }
+            }
+            case HAS_ITEM, HAS_NEAR, IN_RADIUS, IF, FIND_BLOCK -> {
+                boolean ok = switch (side.kind) {
+                    case HAS_ITEM -> countTarget(player, side) >= Math.max(1, side.count);
+                    case HAS_NEAR, IN_RADIUS, FIND_BLOCK -> findInRadius(mc, player, side) != null;
+                    case IF -> {
+                        String mode = side.mode == null ? "has_item" : side.mode;
+                        yield switch (mode) {
+                            case "has_near" -> findInRadius(mc, player, side) != null;
+                            case "has_count" -> countTarget(player, side) >= Math.max(1, side.count);
+                            default -> countTarget(player, side) >= Math.max(1, side.count);
+                        };
+                    }
+                    default -> true;
+                };
+                if (side.hasBranchPorts()) {
+                    var edge = graph.out(side.id, ok ? LogicEdge.Port.TRUE : LogicEdge.Port.FALSE)
+                            .or(() -> graph.out(side.id, LogicEdge.Port.OUT));
+                    parallelId = edge.map(e -> e.toId).orElse(null);
+                } else {
+                    advanceParallel(side);
+                }
+                acted = true;
+            }
+            default -> {
+                if (parallelTicks > 40) {
+                    advanceParallel(side);
+                }
+            }
+        }
+        if (acted) {
+            status = "‖ " + side.title();
+        }
+        return acted;
+    }
+
+    private void advanceParallel(LogicNode side) {
+        parallelTicks = 0;
+        var edge = graph.out(side.id, LogicEdge.Port.OUT);
+        if (edge.isEmpty() && side.hasBranchPorts()) {
+            edge = graph.out(side.id, LogicEdge.Port.TRUE);
+        }
+        if (edge.isEmpty()) {
+            parallelId = null;
+            chat("§dПаралельно: дод. задачу завершено");
+        } else {
+            parallelId = edge.get().toId;
+            LogicNode next = graph.find(parallelId).orElse(null);
+            if (next != null && next.kind == NodeKind.END) {
+                parallelId = null;
+                chat("§dПаралельно: дод. задачу завершено");
+            }
+        }
+    }
+
+    private void runGotoPos(Minecraft mc, LocalPlayer player, LogicNode node) {
+        Vec3 dest = new Vec3(node.posX + 0.5, node.posY, node.posZ + 0.5);
+        status = "йду в " + node.posX + " " + node.posY + " " + node.posZ;
+        if (player.position().distanceToSqr(dest) < 2.25) {
+            if (nav != null) {
+                nav.stop(false);
+            }
+            advance(LogicEdge.Port.OUT);
+            return;
+        }
+        if (nav != null) {
+            if (!nav.isMoving() || ticksOnNode % 40 == 1) {
+                nav.goTo(dest, null);
+            }
+            nav.tick();
+        } else {
+            BotUtil.lookAt(player, dest);
+            MovementKeys.setMove(true, false, false, true);
+        }
+    }
+
+    private void runFollow(Minecraft mc, LocalPlayer player, LogicNode node) {
+        double range = Math.max(8, Math.min(96, node.radius <= 0 ? 48 : node.radius));
+        double stopAt = Math.max(1.5, node.count <= 0 ? 3 : node.count);
+        Entity target = BotUtil.findFollowTarget(mc.level, player, node.mode, node.target, range);
+        if (target == null) {
+            status = "шукаю " + ("player".equals(node.mode) ? "гравця" : "сутність") + " r=" + (int) range;
+            MovementKeys.setMove(false, false, false, false);
+            if (ticksOnNode > 20 * 25) {
+                advance(LogicEdge.Port.OUT);
+            }
+            return;
+        }
+        status = "за " + target.getName().getString();
+        double dist = player.distanceTo(target);
+        BotUtil.lookAtEntity(player, target);
+        if (dist <= stopAt) {
+            if (nav != null) {
+                nav.stop(false);
+            }
+            MovementKeys.setMove(false, false, false, false);
+            // Stay following until timeout — or advance if count was meant as "arrive once"
+            // For pursue: keep following; complete after long follow or when lost.
+            // User asked "преследовать" — keep going; advance only on timeout.
+            return;
+        }
+        Vec3 dest = target.position();
+        if (nav != null) {
+            if (!nav.isMoving() || ticksOnNode % 15 == 0) {
+                nav.goTo(dest, null);
+            }
+            nav.tick();
+        } else {
+            MovementKeys.setMove(true, false, false, true);
+        }
+    }
+
+    private void runSurvey(Minecraft mc, LocalPlayer player, LogicNode node) {
+        if (surveyCenter == null) {
+            surveyCenter = new BlockPos(node.posX, node.posY, node.posZ);
+            surveyIndex = 0;
+            chat("§aОбстеження r=" + node.radius + " навколо " + surveyCenter.toShortString());
+        }
+        int points = Math.max(4, Math.min(16, node.count <= 0 ? 8 : node.count));
+        int r = Math.max(4, node.radius);
+        if (surveyIndex >= points) {
+            if (nav != null) {
+                nav.stop(false);
+            }
+            surveyCenter = null;
+            surveyIndex = 0;
+            advance(LogicEdge.Port.OUT);
+            return;
+        }
+        double angle = (Math.PI * 2.0 * surveyIndex) / points;
+        BlockPos wp = surveyCenter.offset(
+                (int) Math.round(Math.cos(angle) * r),
+                0,
+                (int) Math.round(Math.sin(angle) * r));
+        status = "обстеження " + (surveyIndex + 1) + "/" + points;
+        if (player.blockPosition().closerThan(wp, 2.8)) {
+            surveyIndex++;
+            if (nav != null) {
+                nav.stop(false);
+            }
+            return;
+        }
+        Vec3 dest = Vec3.atBottomCenterOf(wp);
+        if (nav != null) {
+            if (!nav.isMoving() || ticksOnNode % 50 == 1) {
+                nav.goTo(dest, null);
+            }
+            nav.tick();
+        } else {
+            BotUtil.lookAt(player, dest);
+            MovementKeys.setMove(true, false, false, true);
+        }
     }
 
     private static String formatArea(AABB a) {
@@ -634,6 +906,8 @@ public final class LogicExecutor {
     private void advance(LogicEdge.Port port) {
         ticksOnNode = 0;
         scoopTicks = 0;
+        surveyCenter = null;
+        surveyIndex = 0;
         // keep workPos across FIND → GOTO/MINE if next node needs it
         if (port != LogicEdge.Port.TRUE) {
             workPos = null;

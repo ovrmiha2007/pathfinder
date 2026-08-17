@@ -8,7 +8,7 @@ package com.lecternscanner.client;
  * </ul>
  */
 public final class ModVersion {
-    public static final String VERSION = "1.4.9.1";
+    public static final String VERSION = "1.5.0";
 
     private ModVersion() {
     }

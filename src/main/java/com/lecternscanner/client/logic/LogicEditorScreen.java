@@ -279,8 +279,7 @@ public final class LogicEditorScreen extends Screen {
             targetBox.setX(canvasRight() + 10);
             targetBox.setY(this.height - 26);
             targetBox.setWidth(INSPECT_W - 20);
-            if (selected != null && selected.kind != NodeKind.START && selected.kind != NodeKind.END
-                    && selected.kind != NodeKind.AREA && selected.kind != NodeKind.CHEAT) {
+            if (selected != null && !hideTargetBox(selected.kind)) {
                 targetBox.setValue(selected.target == null ? "" : selected.target);
                 targetBox.setEditable(true);
                 targetBox.visible = true;
@@ -448,13 +447,75 @@ public final class LogicEditorScreen extends Screen {
 
         g.drawString(this.font, selected.kind.label, ix, iy, TEXT, false);
         iy += 14;
-        if (selected.kind != NodeKind.AREA && selected.kind != NodeKind.START
-                && selected.kind != NodeKind.END && selected.kind != NodeKind.CHEAT) {
+        if (!hideTargetBox(selected.kind) && selected.kind != NodeKind.FOLLOW) {
             g.drawString(this.font, selected.shortTarget().isEmpty() ? "без цілі" : selected.shortTarget(),
+                    ix, iy, MUTED, false);
+            iy += 18;
+        } else if (selected.kind == NodeKind.FOLLOW) {
+            g.drawString(this.font, selected.shortTarget().isEmpty()
+                            ? ("player".equals(selected.mode) ? "будь-який гравець" : "сутність")
+                            : selected.shortTarget(),
                     ix, iy, MUTED, false);
             iy += 18;
         } else {
             iy += 4;
+        }
+
+        if (selected.kind == NodeKind.PARALLEL) {
+            g.drawWordWrap(this.font, Component.literal(
+                            "Порт «дод» — побічна задача (коли можна під час основної). "
+                                    + "Порт «далі» — основний потік схеми."),
+                    ix, iy, INSPECT_W - 20, MUTED);
+            return;
+        }
+
+        if (selected.kind == NodeKind.GOTO_POS) {
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "X", selected.posX);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Y", selected.posY);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Z", selected.posZ);
+            boolean hover = mouseX >= ix && mouseX < ix + INSPECT_W - 20 && mouseY >= iy && mouseY < iy + 18;
+            fillRoundish(g, ix, iy, ix + INSPECT_W - 20, iy + 18, hover ? 0xFF2A6F6F : 0xFF1A2430);
+            g.drawCenteredString(this.font, "Взяти мої XYZ", ix + (INSPECT_W - 20) / 2, iy + 5, ACCENT);
+            return;
+        }
+
+        if (selected.kind == NodeKind.SURVEY) {
+            g.drawString(this.font, "Центр обходу", ix, iy, MUTED, false);
+            iy += 12;
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "X", selected.posX);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Y", selected.posY);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Z", selected.posZ);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Радіус", selected.radius);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Точок", selected.count);
+            boolean hover = mouseX >= ix && mouseX < ix + INSPECT_W - 20 && mouseY >= iy && mouseY < iy + 18;
+            fillRoundish(g, ix, iy, ix + INSPECT_W - 20, iy + 18, hover ? 0xFF2A6F6F : 0xFF1A2430);
+            g.drawCenteredString(this.font, "Взяти мої XYZ", ix + (INSPECT_W - 20) / 2, iy + 5, ACCENT);
+            return;
+        }
+
+        if (selected.kind == NodeKind.FOLLOW) {
+            g.drawString(this.font, "Кого шукати", ix, iy, MUTED, false);
+            iy += 12;
+            for (TargetPresets.Preset p : TargetPresets.FOLLOW_MODES) {
+                boolean on = p.id().equals(selected.mode);
+                boolean hover = mouseX >= ix && mouseX < ix + INSPECT_W - 20 && mouseY >= iy && mouseY < iy + 18;
+                fillRoundish(g, ix, iy, ix + INSPECT_W - 20, iy + 18, on ? 0xFF2A6F6F : (hover ? 0xFF243040 : 0xFF1A2430));
+                g.drawString(this.font, p.label(), ix + 6, iy + 5, on ? ACCENT : TEXT, false);
+                iy += 22;
+            }
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Радіус", selected.radius);
+            iy = drawStatRow(g, ix, iy, mouseX, mouseY, "Дистанція", selected.count);
+            iy += 4;
+            if ("entity".equals(selected.mode)) {
+                g.drawString(this.font, "Тип сутності", ix, iy, MUTED, false);
+                iy += 12;
+                for (TargetPresets.Preset p : TargetPresets.FOLLOW_ENTITIES) {
+                    iy = drawChip(g, ix, iy, mouseX, mouseY, p, selected.target.equals(p.id()));
+                }
+            } else {
+                g.drawString(this.font, "Ім'я гравця (порожньо = будь-хто)", ix, iy, MUTED, false);
+            }
+            return;
         }
 
         if (selected.kind == NodeKind.CHEAT) {
@@ -577,7 +638,9 @@ public final class LogicEditorScreen extends Screen {
 
         iy += 8;
         if (selected.kind != NodeKind.END && selected.kind != NodeKind.START
-                && selected.kind != NodeKind.AREA && selected.kind != NodeKind.CHEAT) {
+                && selected.kind != NodeKind.AREA && selected.kind != NodeKind.CHEAT
+                && selected.kind != NodeKind.PARALLEL && selected.kind != NodeKind.GOTO_POS
+                && selected.kind != NodeKind.SURVEY && selected.kind != NodeKind.FOLLOW) {
             g.drawString(this.font, "Свій id:", ix, iy, MUTED, false);
         }
     }
@@ -612,7 +675,19 @@ public final class LogicEditorScreen extends Screen {
                 || kind == NodeKind.IN_RADIUS
                 || kind == NodeKind.MINE
                 || kind == NodeKind.PICKUP
-                || kind == NodeKind.GOTO;
+                || kind == NodeKind.GOTO
+                || kind == NodeKind.FOLLOW
+                || kind == NodeKind.SURVEY;
+    }
+
+    private static boolean hideTargetBox(NodeKind kind) {
+        return kind == NodeKind.START
+                || kind == NodeKind.END
+                || kind == NodeKind.AREA
+                || kind == NodeKind.CHEAT
+                || kind == NodeKind.PARALLEL
+                || kind == NodeKind.GOTO_POS
+                || kind == NodeKind.SURVEY;
     }
 
     private int drawToggle(GuiGraphics g, int ix, int iy, int mouseX, int mouseY, String label, boolean on) {
@@ -649,7 +724,7 @@ public final class LogicEditorScreen extends Screen {
 
     private static String portLabel(LogicEdge.Port p) {
         return switch (p) {
-            case TRUE -> "ТАК";
+            case TRUE -> "ТАК/ДОД";
             case FALSE -> "НІ";
             case MAYBE -> "?";
             default -> "ДАЛІ";
@@ -861,9 +936,18 @@ public final class LogicEditorScreen extends Screen {
 
         if (zoom >= 0.65f) {
             g.drawString(this.font, n.kind.label, sx + 6, sy + 3, TEXT, false);
-            String sub = n.kind == NodeKind.CHEAT
-                    ? "чит"
-                    : (n.shortTarget().isEmpty() ? "—" : n.shortTarget());
+            String sub;
+            if (n.kind == NodeKind.FOLLOW) {
+                sub = "player".equals(n.mode) ? "гравець" : "сутність";
+            } else if (n.kind == NodeKind.GOTO_POS) {
+                sub = n.posX + " " + n.posZ;
+            } else if (n.kind == NodeKind.SURVEY) {
+                sub = "r" + n.radius;
+            } else if (n.kind == NodeKind.PARALLEL) {
+                sub = "дод.задача";
+            } else {
+                sub = n.shortTarget().isEmpty() ? "—" : n.shortTarget();
+            }
             if (sub.length() > 15) {
                 sub = sub.substring(0, 13) + "…";
             }
@@ -871,6 +955,14 @@ public final class LogicEditorScreen extends Screen {
             String meta;
             if (n.kind == NodeKind.CHEAT) {
                 meta = "r" + n.radius;
+            } else if (n.kind == NodeKind.FOLLOW) {
+                meta = "r" + n.radius + " d" + n.count;
+            } else if (n.kind == NodeKind.SURVEY) {
+                meta = "r" + n.radius + " ×" + n.count;
+            } else if (n.kind == NodeKind.GOTO_POS) {
+                meta = "XYZ";
+            } else if (n.kind == NodeKind.PARALLEL) {
+                meta = "‖";
             } else if (needsRadius(n.kind) || (n.kind == NodeKind.IF && "has_near".equals(n.mode))) {
                 meta = "×" + n.count + "  r" + n.radius;
             } else if (n.kind == NodeKind.IF) {
@@ -892,7 +984,16 @@ public final class LogicEditorScreen extends Screen {
         int portR = Math.max(2, Math.round(3 * zoom));
         int[] inPort = LogicGraph.portAnchor(n, LogicEdge.Port.OUT, false);
         drawPort(g, Math.round(toScreenX(inPort[0])), Math.round(toScreenY(inPort[1])), 0xFF4A9B9B, portR);
-        if (n.hasBranchPorts()) {
+        if (n.hasParallelPorts()) {
+            int[] truePort = LogicGraph.portAnchor(n, LogicEdge.Port.TRUE, true);
+            int[] outPort = LogicGraph.portAnchor(n, LogicEdge.Port.OUT, true);
+            drawPort(g, Math.round(toScreenX(truePort[0])), Math.round(toScreenY(truePort[1])), 0xFFC77DFF, portR);
+            drawPort(g, Math.round(toScreenX(outPort[0])), Math.round(toScreenY(outPort[1])), 0xFF8A9AAB, portR);
+            if (zoom >= 0.75f) {
+                g.drawString(this.font, "дод", sx + nw - 28, sy + Math.round(6 * zoom), 0xFFC77DFF, false);
+                g.drawString(this.font, "далі", sx + nw - 32, sy + Math.round(28 * zoom), 0xFF8A9AAB, false);
+            }
+        } else if (n.hasBranchPorts()) {
             int[] truePort = LogicGraph.portAnchor(n, LogicEdge.Port.TRUE, true);
             int[] falsePort = LogicGraph.portAnchor(n, LogicEdge.Port.FALSE, true);
             drawPort(g, Math.round(toScreenX(truePort[0])), Math.round(toScreenY(truePort[1])), 0xFF6BCB8A, portR);
@@ -1059,7 +1160,10 @@ public final class LogicEditorScreen extends Screen {
         if (hit != null) {
             if (button == 1) {
                 LogicEdge.Port port = LogicEdge.Port.OUT;
-                if (hit.hasBranchPorts()) {
+                if (hit.hasParallelPorts()) {
+                    float localY = toWorldY(my) - hit.y;
+                    port = localY < NODE_H / 2f ? LogicEdge.Port.TRUE : LogicEdge.Port.OUT;
+                } else if (hit.hasBranchPorts()) {
                     float localY = toWorldY(my) - hit.y;
                     port = localY < NODE_H / 2f ? LogicEdge.Port.TRUE : LogicEdge.Port.FALSE;
                 }
@@ -1161,13 +1265,115 @@ public final class LogicEditorScreen extends Screen {
     private boolean clickInspector(int mx, int my) {
         int ix = canvasRight() + 10;
         int iy = 28 - scrollInspect;
-        // Must match drawInspector header: title (+14), then shortTarget (+18) or spacer (+4)
+        // Match drawInspector: title (+14), then shortTarget (+18) or spacer (+4)
         iy += 14;
         if (selected.kind == NodeKind.AREA || selected.kind == NodeKind.START
-                || selected.kind == NodeKind.END || selected.kind == NodeKind.CHEAT) {
+                || selected.kind == NodeKind.END || selected.kind == NodeKind.CHEAT
+                || selected.kind == NodeKind.PARALLEL || selected.kind == NodeKind.GOTO_POS
+                || selected.kind == NodeKind.SURVEY) {
             iy += 4;
         } else {
             iy += 18;
+        }
+
+        if (selected.kind == NodeKind.PARALLEL) {
+            return false;
+        }
+
+        if (selected.kind == NodeKind.GOTO_POS) {
+            if (clickStat(mx, my, ix, iy, selected.posX, v -> { pushUndo(); selected.posX = v; }, -30_000_000, 30_000_000)) {
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.posY, v -> { pushUndo(); selected.posY = v; }, -64, 320)) {
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.posZ, v -> { pushUndo(); selected.posZ = v; }, -30_000_000, 30_000_000)) {
+                return true;
+            }
+            iy += 22;
+            if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 18)) {
+                pushUndo();
+                selected.snapCoordsFromPlayer();
+                toast("XYZ " + selected.posX + " " + selected.posY + " " + selected.posZ, 40);
+                return true;
+            }
+            return false;
+        }
+
+        if (selected.kind == NodeKind.SURVEY) {
+            iy += 12;
+            if (clickStat(mx, my, ix, iy, selected.posX, v -> { pushUndo(); selected.posX = v; }, -30_000_000, 30_000_000)) {
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.posY, v -> { pushUndo(); selected.posY = v; }, -64, 320)) {
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.posZ, v -> { pushUndo(); selected.posZ = v; }, -30_000_000, 30_000_000)) {
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.radius, v -> { pushUndo(); selected.radius = v; }, 4, 128)) {
+                toast("радіус=" + selected.radius, 20);
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.count, v -> { pushUndo(); selected.count = v; }, 4, 16)) {
+                toast("точок=" + selected.count, 20);
+                return true;
+            }
+            iy += 22;
+            if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 18)) {
+                pushUndo();
+                selected.snapCoordsFromPlayer();
+                toast("центр " + selected.posX + " " + selected.posY + " " + selected.posZ, 40);
+                return true;
+            }
+            return false;
+        }
+
+        if (selected.kind == NodeKind.FOLLOW) {
+            iy += 12;
+            for (TargetPresets.Preset p : TargetPresets.FOLLOW_MODES) {
+                if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 18)) {
+                    pushUndo();
+                    selected.mode = p.id();
+                    if ("player".equals(p.id()) && (selected.target.startsWith("minecraft:") || "any".equals(selected.target)
+                            || "hostile".equals(selected.target) || "animal".equals(selected.target))) {
+                        selected.target = "";
+                    }
+                    toast(p.label(), 30);
+                    return true;
+                }
+                iy += 22;
+            }
+            if (clickStat(mx, my, ix, iy, selected.radius, v -> { pushUndo(); selected.radius = v; }, 8, 96)) {
+                toast("радіус=" + selected.radius, 20);
+                return true;
+            }
+            iy += 22;
+            if (clickStat(mx, my, ix, iy, selected.count, v -> { pushUndo(); selected.count = v; }, 1, 16)) {
+                toast("дистанція=" + selected.count, 20);
+                return true;
+            }
+            iy += 22 + 4;
+            if ("entity".equals(selected.mode)) {
+                iy += 12;
+                for (TargetPresets.Preset p : TargetPresets.FOLLOW_ENTITIES) {
+                    if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 16)) {
+                        pushUndo();
+                        selected.target = p.id();
+                        targetBox.setValue(p.id());
+                        toast(p.label(), 25);
+                        return true;
+                    }
+                    iy += 20;
+                }
+            }
+            return false;
         }
 
         if (selected.kind == NodeKind.AREA) {

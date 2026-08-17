@@ -53,6 +53,24 @@ public final class TargetPresets {
             new Preset("has_count", "Кількість предмета ≥")
     );
 
+    public static final List<Preset> FOLLOW_MODES = List.of(
+            new Preset("player", "Гравець"),
+            new Preset("entity", "Сутність")
+    );
+
+    public static final List<Preset> FOLLOW_ENTITIES = List.of(
+            new Preset("any", "Будь-яка жива"),
+            new Preset("hostile", "Вороги"),
+            new Preset("animal", "Тварини"),
+            new Preset("minecraft:zombie", "Зомбі"),
+            new Preset("minecraft:skeleton", "Скелет"),
+            new Preset("minecraft:creeper", "Кріпер"),
+            new Preset("minecraft:cow", "Корова"),
+            new Preset("minecraft:pig", "Свиня"),
+            new Preset("minecraft:sheep", "Вівця"),
+            new Preset("minecraft:villager", "Селянин")
+    );
+
     private TargetPresets() {
     }
 
@@ -60,6 +78,7 @@ public final class TargetPresets {
         return switch (kind) {
             case HAS_ITEM, CRAFT, PLACE, SMELT, TAKE_FROM, PICKUP -> ITEMS;
             case FIND_BLOCK, MINE, HAS_NEAR, IN_RADIUS, GOTO -> BLOCKS;
+            case FOLLOW -> FOLLOW_ENTITIES;
             case IF -> IF_MODES;
             default -> List.of();
         };

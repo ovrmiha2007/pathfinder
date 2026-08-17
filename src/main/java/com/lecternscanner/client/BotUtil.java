@@ -10,6 +10,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
@@ -641,6 +642,71 @@ public final class BotUtil {
             }
         }
         return best;
+    }
+
+    /**
+     * Find nearest follow target.
+     * @param mode {@code player} or {@code entity}
+     * @param filter player name (partial, case-insensitive) / entity id / {@code any|hostile|animal}
+     */
+    public static Entity findFollowTarget(ClientLevel level, LocalPlayer player, String mode,
+                                          String filter, double range) {
+        String f = filter == null ? "" : filter.trim().toLowerCase(java.util.Locale.ROOT);
+        AABB box = player.getBoundingBox().inflate(range);
+        Entity best = null;
+        double bestD = range * range;
+        boolean wantPlayer = !"entity".equals(mode);
+
+        for (Entity e : level.getEntities(player, box)) {
+            if (e == player || !e.isAlive() || e.isRemoved()) {
+                continue;
+            }
+            if (wantPlayer) {
+                if (!(e instanceof net.minecraft.world.entity.player.Player)) {
+                    continue;
+                }
+                if (!f.isEmpty()) {
+                    String name = e.getName().getString().toLowerCase(java.util.Locale.ROOT);
+                    if (!name.contains(f) && !e.getUUID().toString().toLowerCase(java.util.Locale.ROOT).startsWith(f)) {
+                        continue;
+                    }
+                }
+            } else {
+                if (!(e instanceof LivingEntity)) {
+                    continue;
+                }
+                if (!matchesEntityFilter(e, f)) {
+                    continue;
+                }
+            }
+            double d = player.distanceToSqr(e);
+            if (d < bestD) {
+                bestD = d;
+                best = e;
+            }
+        }
+        return best;
+    }
+
+    private static boolean matchesEntityFilter(Entity e, String filter) {
+        if (filter.isEmpty() || "any".equals(filter)) {
+            return true;
+        }
+        if ("hostile".equals(filter)) {
+            return e instanceof Enemy;
+        }
+        if ("animal".equals(filter)) {
+            String name = e.getType().toShortString();
+            return name.contains("cow") || name.contains("pig") || name.contains("sheep")
+                    || name.contains("chicken") || name.contains("horse") || name.contains("wolf");
+        }
+        String id = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString().toLowerCase(java.util.Locale.ROOT);
+        String shortId = id.contains(":") ? id.substring(id.indexOf(':') + 1) : id;
+        String f = filter.startsWith("minecraft:") ? filter : filter;
+        if (f.startsWith("#")) {
+            f = f.substring(1);
+        }
+        return id.equals(f) || shortId.equals(f) || id.contains(f) || shortId.contains(f);
     }
 
     public static LivingEntity nearestFoodAnimal(ClientLevel level, LocalPlayer player, double range) {

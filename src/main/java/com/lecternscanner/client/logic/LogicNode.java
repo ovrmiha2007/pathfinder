@@ -68,6 +68,8 @@ public final class LogicNode {
         return switch (kind) {
             case PLACE -> "near";
             case AREA -> "radius";
+            case FOLLOW -> "player";
+            case SURVEY -> "circle";
             default -> "has_item";
         };
     }
@@ -92,6 +94,10 @@ public final class LogicNode {
                 radius = 96;
                 target = "";
             }
+            case PARALLEL -> {
+                target = "";
+                mode = "";
+            }
             case CRAFT -> target = "minecraft:oak_planks";
             case MINE, FIND_BLOCK, HAS_NEAR, IN_RADIUS -> {
                 target = "#minecraft:logs";
@@ -113,6 +119,23 @@ public final class LogicNode {
             case GOTO -> {
                 target = "minecraft:crafting_table";
                 radius = 32;
+            }
+            case GOTO_POS -> {
+                target = "";
+                mode = "coords";
+                snapCoordsFromPlayer();
+            }
+            case FOLLOW -> {
+                mode = "player";
+                target = "";
+                radius = 48;
+                count = 3; // stop distance blocks
+            }
+            case SURVEY -> {
+                mode = "circle";
+                radius = 16;
+                count = 8; // waypoints
+                snapCoordsFromPlayer();
             }
             case END -> {
                 target = "";
@@ -156,6 +179,21 @@ public final class LogicNode {
         }
         if (kind == NodeKind.CHEAT) {
             return kind.label + " r=" + radius;
+        }
+        if (kind == NodeKind.PARALLEL) {
+            return kind.label + " (дод. задача)";
+        }
+        if (kind == NodeKind.GOTO_POS) {
+            return kind.label + " " + posX + " " + posY + " " + posZ;
+        }
+        if (kind == NodeKind.FOLLOW) {
+            String who = "player".equals(mode)
+                    ? (shortTarget().isEmpty() ? "гравець" : shortTarget())
+                    : (shortTarget().isEmpty() ? "сутність" : shortTarget());
+            return kind.label + ": " + who + " r=" + radius;
+        }
+        if (kind == NodeKind.SURVEY) {
+            return kind.label + " @" + posX + " " + posZ + " r=" + radius;
         }
         if (kind == NodeKind.PLACE) {
             String shortT = shortTarget();
@@ -208,6 +246,11 @@ public final class LogicNode {
                 || kind == NodeKind.PICKUP;
     }
 
+    /** OUT = main flow, TRUE = opportunistic side task. */
+    public boolean hasParallelPorts() {
+        return kind == NodeKind.PARALLEL;
+    }
+
     public Map<String, Object> toMap() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id);
@@ -252,6 +295,12 @@ public final class LogicNode {
         }
         if (kind == NodeKind.AREA && ("has_item".equals(mode) || mode.isEmpty() || "null".equals(mode))) {
             mode = "radius";
+        }
+        if (kind == NodeKind.FOLLOW && ("has_item".equals(mode) || mode.isEmpty() || "null".equals(mode))) {
+            mode = "player";
+        }
+        if (kind == NodeKind.SURVEY && ("has_item".equals(mode) || mode.isEmpty() || "null".equals(mode))) {
+            mode = "circle";
         }
         return new LogicNode(
                 String.valueOf(m.get("id")),

@@ -8,6 +8,7 @@ public enum NodeKind {
     START("Старт", Category.FLOW, 0xFF2A9D8F),
     AREA("Зона", Category.FLOW, 0xFF5B8C5A),
     CHEAT("Чит", Category.FLOW, 0xFFE63946),
+    PARALLEL("Паралельно", Category.FLOW, 0xFF9B5DE5),
     IF("Якщо", Category.FLOW, 0xFF3D5A80),
     END("Кінець", Category.FLOW, 0xFFB00020),
 
@@ -24,7 +25,10 @@ public enum NodeKind {
     PLACE("Поставити", Category.ACTION, 0xFF7B2D8E),
     SMELT("Переплавити", Category.ACTION, 0xFF9B2226),
     TAKE_FROM("Взяти з", Category.ACTION, 0xFF4A6FA5),
-    GOTO("Йти до", Category.ACTION, 0xFF2D6A4F);
+    GOTO("Йти до", Category.ACTION, 0xFF2D6A4F),
+    GOTO_POS("Йти в", Category.ACTION, 0xFF40916C),
+    FOLLOW("Переслідувати", Category.ACTION, 0xFFE76F51),
+    SURVEY("Обстежити", Category.ACTION, 0xFF457B9D);
 
     public enum Category { FLOW, COND, ACTION }
 
@@ -44,10 +48,14 @@ public enum NodeKind {
             return START;
         }
         return switch (name) {
-            case "ELSE", "OPTIONAL", "REQUIRED" -> START; // removed — skip as passthrough start-like
+            case "ELSE", "OPTIONAL", "REQUIRED" -> START;
             case "FIND" -> FIND_BLOCK;
             case "ZONE", "RADIUS_ZONE" -> AREA;
             case "XRAY", "VISION" -> CHEAT;
+            case "PURSUE", "FOLLOW_ENTITY", "CHASE" -> FOLLOW;
+            case "WALK_TO", "GO_TO_COORDS", "GOTO_XYZ", "GOTO_COORDS" -> GOTO_POS;
+            case "EXPLORE", "PATROL", "SCOUT" -> SURVEY;
+            case "PAR", "BG", "BACKGROUND" -> PARALLEL;
             default -> {
                 try {
                     yield NodeKind.valueOf(name);
