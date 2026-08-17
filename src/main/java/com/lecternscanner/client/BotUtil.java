@@ -1153,6 +1153,9 @@ public final class BotUtil {
                                                  Predicate<BlockState> pred,
                                                  net.minecraft.world.phys.AABB area) {
         int r = Math.max(range, BotCheat.scanRadius());
+        int ox = origin.getX();
+        int oy = origin.getY();
+        int oz = origin.getZ();
         int minX;
         int minY;
         int minZ;
@@ -1167,12 +1170,15 @@ public final class BotUtil {
             maxY = (int) Math.ceil(area.maxY) - 1;
             maxZ = (int) Math.ceil(area.maxZ) - 1;
         } else {
-            minX = origin.getX() - r;
-            minY = Math.max(level.getMinY(), origin.getY() - Math.min(64, r));
-            minZ = origin.getZ() - r;
-            maxX = origin.getX() + r;
-            maxY = Math.min(level.getMinY() + level.getHeight() - 1, origin.getY() + Math.min(64, r));
-            maxZ = origin.getZ() + r;
+            // Performance: even with large cheat radius, don't scan entire vertical stack.
+            // Cheat is about ignoring LOS/exposed faces, not about full 256-block Y sweep.
+            int yHalf = Math.min(32, r);
+            minX = ox - r;
+            minY = Math.max(level.getMinY(), oy - yHalf);
+            minZ = oz - r;
+            maxX = ox + r;
+            maxY = Math.min(level.getMinY() + level.getHeight() - 1, oy + yHalf);
+            maxZ = oz + r;
         }
 
         BlockPos best = null;
@@ -1192,18 +1198,26 @@ public final class BotUtil {
                 int x1 = Math.min(maxX, (cx << 4) + 15);
                 int z0 = Math.max(minZ, cz << 4);
                 int z1 = Math.min(maxZ, (cz << 4) + 15);
+
+                // Lower-bound manhattan distance from origin to ANY block in this chunk AABB.
+                // If it's already worse than current best — skip scanning this chunk.
+                int dx = ox < x0 ? (x0 - ox) : (ox > x1 ? (ox - x1) : 0);
+                int dz = oz < z0 ? (z0 - oz) : (oz > z1 ? (oz - z1) : 0);
+                int dy = oy < minY ? (minY - oy) : (oy > maxY ? (oy - maxY) : 0);
+                int lowerBound = dx + dy + dz;
+                if (lowerBound > bestD) {
+                    continue;
+                }
+
                 for (int x = x0; x <= x1; x++) {
                     for (int z = z0; z <= z1; z++) {
                         for (int y = minY; y <= maxY; y++) {
                             BlockPos p = new BlockPos(x, y, z);
-                            if (!level.isLoaded(p)) {
-                                continue;
-                            }
                             BlockState st = chunk.getBlockState(p);
                             if (!pred.test(st)) {
                                 continue;
                             }
-                            int d = Math.abs(x - origin.getX()) + Math.abs(y - origin.getY()) + Math.abs(z - origin.getZ());
+                            int d = Math.abs(x - ox) + Math.abs(y - oy) + Math.abs(z - oz);
                             if (d < bestD) {
                                 bestD = d;
                                 best = p.immutable();

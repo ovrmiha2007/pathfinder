@@ -62,7 +62,9 @@ public final class SurvivalAStar {
         bestG.put(startKey, 0.0);
 
         int expanded = 0;
-        int nodeBudget = BotCheat.isEnabled() ? MAX_NODES * 2 : MAX_NODES;
+        // Performance: cheat mode should not double-expand the whole search space.
+        // Keep a modest bump, enough to tunnel toward buried targets.
+        int nodeBudget = BotCheat.isEnabled() ? (int) (MAX_NODES * 1.35) : MAX_NODES;
         while (!open.isEmpty() && expanded < nodeBudget) {
             Node cur = open.poll();
             long ck = cur.pos.asLong();
