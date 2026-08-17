@@ -54,6 +54,9 @@ public final class LogicEditorScreen extends Screen {
     private boolean draggingWaypoint;
     private NodeKind pendingPlace;
     private EditBox targetBox;
+    private final List<String> suggestions = new ArrayList<>();
+    private int suggestionIndex;
+    private boolean showSuggestions;
     private String toast = "";
     private int toastTicks;
     private int scrollPalette;
@@ -243,14 +246,16 @@ public final class LogicEditorScreen extends Screen {
 
         targetBox = new EditBox(this.font, canvasRight() + 10, this.height - 26, INSPECT_W - 20, 16,
                 Component.literal("target"));
-        targetBox.setMaxLength(64);
-        targetBox.setHint(Component.literal("id або #tag"));
+        targetBox.setMaxLength(96);
+        targetBox.setHint(Component.literal("id / #tag / гравець…"));
         targetBox.setResponder(s -> {
             if (selected != null) {
                 selected.target = s;
             }
+            refreshSuggestions(s);
         });
         this.addRenderableWidget(targetBox);
+        TargetPresets.ensureLoaded();
         rebuildInspectorWidgets();
     }
 
@@ -283,17 +288,131 @@ public final class LogicEditorScreen extends Screen {
                 targetBox.setValue(selected.target == null ? "" : selected.target);
                 targetBox.setEditable(true);
                 targetBox.visible = true;
+                refreshSuggestions(targetBox.getValue());
             } else {
                 targetBox.setValue("");
                 targetBox.setEditable(false);
                 targetBox.visible = false;
+                clearSuggestions();
             }
+        }
+    }
+
+    private void refreshSuggestions(String typed) {
+        suggestions.clear();
+        suggestionIndex = 0;
+        if (selected == null || hideTargetBox(selected.kind) || targetBox == null || !targetBox.visible) {
+            showSuggestions = false;
+            return;
+        }
+        // FOLLOW player: still show target box for name — enable suggestions
+        IdSuggestions.Pool pool = IdSuggestions.poolFor(selected);
+        suggestions.addAll(IdSuggestions.suggest(typed, pool, 10));
+        showSuggestions = targetBox.isFocused() && !suggestions.isEmpty();
+        if (suggestionIndex >= suggestions.size()) {
+            suggestionIndex = Math.max(0, suggestions.size() - 1);
+        }
+    }
+
+    private void clearSuggestions() {
+        suggestions.clear();
+        suggestionIndex = 0;
+        showSuggestions = false;
+    }
+
+    private void applySuggestion(String id) {
+        if (selected == null || id == null) {
+            return;
+        }
+        pushUndo();
+        selected.target = id;
+        if (targetBox != null) {
+            targetBox.setValue(id);
+            targetBox.setFocused(true);
+            try {
+                targetBox.moveCursorToEnd(false);
+            } catch (Throwable ignored) {
+                // older/newer EditBox API variants
+            }
+        }
+        clearSuggestions();
+        toast(id, 25);
+    }
+
+    private void saveCurrentAsPreset() {
+        if (selected == null) {
+            return;
+        }
+        String id = selected.target == null ? "" : selected.target.trim();
+        if (id.isEmpty()) {
+            toast("Спочатку введи id", 30);
+            return;
+        }
+        TargetPresets.ListKind kind = TargetPresets.listKindFor(selected);
+        if (TargetPresets.addPreset(kind, id, TargetPresets.suggestLabel(id))) {
+            toast("Пресет збережено", 35);
         }
     }
 
     private void toast(String msg, int ticks) {
         this.toast = msg;
         this.toastTicks = ticks;
+    }
+
+    private void drawSuggestions(GuiGraphics g, int mouseX, int mouseY) {
+        if (!showSuggestions || suggestions.isEmpty() || targetBox == null || !targetBox.visible) {
+            return;
+        }
+        int bx = targetBox.getX();
+        int by = targetBox.getY();
+        int bw = targetBox.getWidth();
+        int rowH = 12;
+        int rows = suggestions.size();
+        int boxH = rows * rowH + 4;
+        int top = by - boxH - 2;
+        if (top < 36) {
+            top = by + 18;
+        }
+        g.fill(bx - 1, top - 1, bx + bw + 1, top + boxH + 1, 0xFF0A0E12);
+        g.fill(bx, top, bx + bw, top + boxH, 0xFF1A2430);
+        for (int i = 0; i < rows; i++) {
+            int y = top + 2 + i * rowH;
+            boolean sel = i == suggestionIndex;
+            boolean hover = mouseX >= bx && mouseX < bx + bw && mouseY >= y && mouseY < y + rowH;
+            if (sel || hover) {
+                g.fill(bx, y, bx + bw, y + rowH, sel ? 0xFF2A6F6F : 0xFF243040);
+            }
+            String s = suggestions.get(i);
+            if (s.length() > 28) {
+                s = s.substring(0, 26) + "…";
+            }
+            g.drawString(this.font, s, bx + 4, y + 2, sel ? ACCENT : TEXT, false);
+        }
+    }
+
+    /** @return suggestion index under mouse, or -1 */
+    private int hitSuggestion(int mx, int my) {
+        if (!showSuggestions || suggestions.isEmpty() || targetBox == null || !targetBox.visible) {
+            return -1;
+        }
+        int bx = targetBox.getX();
+        int by = targetBox.getY();
+        int bw = targetBox.getWidth();
+        int rowH = 12;
+        int rows = suggestions.size();
+        int boxH = rows * rowH + 4;
+        int top = by - boxH - 2;
+        if (top < 36) {
+            top = by + 18;
+        }
+        if (mx < bx || mx >= bx + bw || my < top || my >= top + boxH) {
+            return -1;
+        }
+        int idx = (my - top - 2) / rowH;
+        if (idx < 0 || idx >= rows) {
+            return -1;
+        }
+        return idx;
     }
 
     @Override
@@ -324,6 +443,8 @@ public final class LogicEditorScreen extends Screen {
         g.fill(canvasRight(), 0, canvasRight() + 1, this.height, PANEL_EDGE);
         g.drawString(this.font, "ВЛАСТИВОСТІ", canvasRight() + 12, 10, ACCENT, false);
         drawInspector(g, mouseX, mouseY);
+        drawPresetTools(g, mouseX, mouseY);
+        drawSuggestions(g, mouseX, mouseY);
 
         g.drawString(this.font,
                 "ПКМ порт=зв'язок · Del · Ctrl+Z · колесо=масштаб · СКМ/порожнє ЛКМ=пан · Alt+клік лінія=точка згину · тягни квадратики",
@@ -637,19 +758,86 @@ public final class LogicEditorScreen extends Screen {
         }
 
         iy += 8;
-        if (selected.kind != NodeKind.END && selected.kind != NodeKind.START
-                && selected.kind != NodeKind.AREA && selected.kind != NodeKind.CHEAT
-                && selected.kind != NodeKind.PARALLEL && selected.kind != NodeKind.GOTO_POS
-                && selected.kind != NodeKind.SURVEY && selected.kind != NodeKind.FOLLOW) {
-            g.drawString(this.font, "Свій id:", ix, iy, MUTED, false);
+    }
+
+    private boolean canManagePresets() {
+        if (selected == null) {
+            return false;
         }
+        return switch (selected.kind) {
+            case FIND_BLOCK, MINE, HAS_NEAR, IN_RADIUS, GOTO,
+                 HAS_ITEM, CRAFT, PLACE, SMELT, TAKE_FROM, PICKUP, IF -> true;
+            default -> false;
+        };
+    }
+
+    private void drawPresetTools(GuiGraphics g, int mouseX, int mouseY) {
+        if (!canManagePresets() || targetBox == null || !targetBox.visible) {
+            return;
+        }
+        int ix = canvasRight() + 10;
+        int w = INSPECT_W - 20;
+        int iy = this.height - 70;
+        g.drawString(this.font, "Tab підказка · Shift+клік=×", ix, iy - 12, MUTED, false);
+        boolean hSave = mouseX >= ix && mouseX < ix + w / 2 - 2 && mouseY >= iy && mouseY < iy + 16;
+        boolean hRest = mouseX >= ix + w / 2 + 2 && mouseX < ix + w && mouseY >= iy && mouseY < iy + 16;
+        fillRoundish(g, ix, iy, ix + w / 2 - 2, iy + 16, hSave ? 0xFF2A6F6F : 0xFF1A2430);
+        fillRoundish(g, ix + w / 2 + 2, iy, ix + w, iy + 16, hRest ? 0xFF6F2A2A : 0xFF1A2430);
+        g.drawCenteredString(this.font, "+ пресет", ix + (w / 2 - 2) / 2, iy + 4, ACCENT);
+        g.drawCenteredString(this.font, "скинути", ix + w / 2 + 2 + (w / 2 - 2) / 2, iy + 4, WARN);
+    }
+
+    private boolean clickPresetTools(int mx, int my) {
+        if (!canManagePresets() || targetBox == null || !targetBox.visible) {
+            return false;
+        }
+        int ix = canvasRight() + 10;
+        int w = INSPECT_W - 20;
+        int iy = this.height - 70;
+        if (hitBox(mx, my, ix, iy, w / 2 - 2, 16)) {
+            saveCurrentAsPreset();
+            return true;
+        }
+        if (hitBox(mx, my, ix + w / 2 + 2, iy, w / 2 - 2, 16)) {
+            TargetPresets.restoreDefaults();
+            toast("Пресети скинуто до стандартних", 40);
+            return true;
+        }
+        return false;
     }
 
     private int drawChip(GuiGraphics g, int ix, int iy, int mouseX, int mouseY, TargetPresets.Preset p, boolean on) {
-        boolean hover = mouseX >= ix && mouseX < ix + INSPECT_W - 20 && mouseY >= iy && mouseY < iy + 16;
-        fillRoundish(g, ix, iy, ix + INSPECT_W - 20, iy + 16, on ? 0xFF3D5A80 : (hover ? 0xFF243040 : 0xFF1A2430));
-        g.drawString(this.font, p.label(), ix + 6, iy + 4, on ? 0xFFB8E0D8 : TEXT, false);
+        int w = INSPECT_W - 20;
+        boolean hover = mouseX >= ix && mouseX < ix + w && mouseY >= iy && mouseY < iy + 16;
+        fillRoundish(g, ix, iy, ix + w, iy + 16, on ? 0xFF3D5A80 : (hover ? 0xFF243040 : 0xFF1A2430));
+        String label = p.label();
+        if (label.length() > 18) {
+            label = label.substring(0, 16) + "…";
+        }
+        g.drawString(this.font, label, ix + 6, iy + 4, on ? 0xFFB8E0D8 : TEXT, false);
+        g.drawString(this.font, "×", ix + w - 12, iy + 4, 0xFFE07A7A, false);
         return iy + 20;
+    }
+
+    /** Select preset, or Shift+click to delete. */
+    private boolean clickPresetChip(int mx, int my, int ix, int iy, TargetPresets.Preset p) {
+        if (!hitBox(mx, my, ix, iy, INSPECT_W - 20, 16)) {
+            return false;
+        }
+        if (hasShift() && canManagePresets()) {
+            TargetPresets.ListKind kind = TargetPresets.listKindFor(selected);
+            if (TargetPresets.removePreset(kind, p.id())) {
+                toast("Видалено: " + p.label(), 30);
+            }
+            return true;
+        }
+        pushUndo();
+        selected.target = p.id();
+        if (targetBox != null) {
+            targetBox.setValue(p.id());
+        }
+        toast(p.label(), 25);
+        return true;
     }
 
     private int drawStatRow(GuiGraphics g, int ix, int iy, int mouseX, int mouseY, String label, int value) {
@@ -1094,6 +1282,14 @@ public final class LogicEditorScreen extends Screen {
         }
 
         if (mx >= canvasRight() && button == 0) {
+            int sug = hitSuggestion(mx, my);
+            if (sug >= 0) {
+                applySuggestion(suggestions.get(sug));
+                return true;
+            }
+            if (clickPresetTools(mx, my)) {
+                return true;
+            }
             if (selectedEdge != null && clickEdgeInspector(mx, my)) {
                 return true;
             }
@@ -1556,11 +1752,7 @@ public final class LogicEditorScreen extends Screen {
             }
             iy += 4 + 12;
             for (TargetPresets.Preset p : TargetPresets.forKind(selected.kind)) {
-                if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 16)) {
-                    pushUndo();
-                    selected.target = p.id();
-                    targetBox.setValue(p.id());
-                    toast(p.label(), 25);
+                if (clickPresetChip(mx, my, ix, iy, p)) {
                     return true;
                 }
                 iy += 20;
@@ -1578,11 +1770,7 @@ public final class LogicEditorScreen extends Screen {
             }
             iy += 4 + 12;
             for (TargetPresets.Preset p : TargetPresets.targetsForIfMode(selected.mode)) {
-                if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 16)) {
-                    pushUndo();
-                    selected.target = p.id();
-                    targetBox.setValue(p.id());
-                    toast(p.label(), 25);
+                if (clickPresetChip(mx, my, ix, iy, p)) {
                     return true;
                 }
                 iy += 20;
@@ -1592,11 +1780,7 @@ public final class LogicEditorScreen extends Screen {
             if (!presets.isEmpty()) {
                 iy += 12;
                 for (TargetPresets.Preset p : presets) {
-                    if (hitBox(mx, my, ix, iy, INSPECT_W - 20, 16)) {
-                        pushUndo();
-                        selected.target = p.id();
-                        targetBox.setValue(p.id());
-                        toast(p.label(), 25);
+                    if (clickPresetChip(mx, my, ix, iy, p)) {
                         return true;
                     }
                     iy += 20;
@@ -1768,8 +1952,29 @@ public final class LogicEditorScreen extends Screen {
                 return true;
             }
         }
-        // While typing target/condition — Backspace & letters go to the field
+        // While typing target/condition — suggestions + field
         if (targetBox != null && targetBox.isFocused()) {
+            if (showSuggestions && !suggestions.isEmpty()) {
+                if (event.key() == GLFW.GLFW_KEY_TAB || event.key() == GLFW.GLFW_KEY_ENTER) {
+                    applySuggestion(suggestions.get(Mth.clamp(suggestionIndex, 0, suggestions.size() - 1)));
+                    return true;
+                }
+                if (event.key() == GLFW.GLFW_KEY_UP) {
+                    suggestionIndex = (suggestionIndex - 1 + suggestions.size()) % suggestions.size();
+                    return true;
+                }
+                if (event.key() == GLFW.GLFW_KEY_DOWN) {
+                    suggestionIndex = (suggestionIndex + 1) % suggestions.size();
+                    return true;
+                }
+                if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+                    clearSuggestions();
+                    return true;
+                }
+            }
+            // keep suggestions visible while typing
+            refreshSuggestions(targetBox.getValue());
+            showSuggestions = !suggestions.isEmpty();
             return super.keyPressed(event);
         }
         if (event.key() == GLFW.GLFW_KEY_SPACE) {
